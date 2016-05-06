@@ -1,15 +1,167 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
   <head>
-    <meta charset="utf-8">
     <link rel="stylesheet" type="text/css" href="https://cdn.mxpnl.com/libs/mixpanel-platform/css/reset.css">
     <link rel="stylesheet" type="text/css" href="https://cdn.mxpnl.com/libs/mixpanel-platform/build/mixpanel-platform.v0.latest.min.css">
     <script src="https://cdn.mxpnl.com/libs/mixpanel-platform/build/mixpanel-platform.v0.latest.min.js"></script>
+    
+    <link rel="stylesheet" type="text/css" href="https://cdnjs.cloudflare.com/ajax/libs/jQRangeSlider/5.7.1/css/iThing.min.css"/>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jqueryui/1.10.3/jquery-ui.min.js"></script>
+    <script src="https://biojs.googlecode.com/svn-history/r487/trunk/src/main/resources/dependencies/jquery/jQRangeSlider-5.1/jQAllRangeSliders-min.js"></script>
+    
   </head>
   <body class="mixpanel-platform-body">
-    <h1>Hello, World!</h1>
+    <div class="mixpanel-platform-section">
+      <div class="titles">
+        <h1 style="font-size: 18px; color: rgb(95,105,131)">Daily Active Users Over Time Period</h1>
+        <p style="font-size: 14px; color: rgb(95,105,131)">Select Date Range</p>
+        <div style="clear: both;"></div>
+      </div>
+      <div class="selectors">
+        <div id="slider"></div><br>
+        <div style="clear: both;"></div>
+        <p style="font-size: 14px; color: rgb(95,105,131)">Select Active Event (Optional: Select Property to Segment on) </p>
+        <div id="eventSelect" style="float: left;"></div>
+        <div id="by" class="mixpanel-platform-label" style="margin-left: 10px; display: none;">by</div>
+        <div id="propSelect" style="float: left;"></div><br>
+        <div style="clear: both;"></div>
+      </div>
+      <div id="graph"></div>
+    </div>
     <script>
-      // Run queries and display results here
+      MP.api.ready(function() {
+        var eventSelect = $('#eventSelect').MPEventSelect();
+        var propSelect  = $('#propSelect').MPPropertySelect();
+        var eventGraph  = $('#graph').MPChart({chartType: 'line'});
+        $("#slider").dateRangeSlider({
+          formatter:function(val){var days = val.getDate(), month = val.getMonth() + 1, year = val.getFullYear();
+            return month + "/" + days + "/" + year;},
+          bounds:{min: moment().subtract(182, 'days').toDate(),max: moment().toDate()},
+          defaultValues:{min: moment().subtract(30, 'days').toDate(),max: moment().toDate()},
+          range:{min: {days: 7},max: {days: 100}}
+        });
+        
+        
+        //find interval for bar chart 'interval' param
+        getInterval = function(dates) {
+          intervalDays = Math.ceil((dates.max - dates.min) / (24 * 60 * 60 * 1000)) + 1
+          return intervalDays
+        }
+        
+        var runQuery = function() {
+          //obtain event, property, and date range 
+          var eventName = eventSelect.MPEventSelect('value'),
+              propName  = propSelect.MPPropertySelect('value'),
+              from_date = $('#slider').dateRangeSlider("values").min,
+              to_date = $('#slider').dateRangeSlider("values").max,
+              date = $("#slider").dateRangeSlider("values");
+              
+          if (eventName) {
+            $('#graph').empty();
+            // Run if property selected
+            if (propName) {
+              var dauParams = $.extend({}, {
+                'from': moment(from_date).format('YYYY-MM-DD'),
+                'to':  moment(to_date).format('YYYY-MM-DD'),
+                'type': 'unique',
+                'unit': 'day',
+                'on': 'properties[\"' + propName + '\"]'
+              });
+              var mauParams = $.extend({}, {
+                'from': moment(from_date).format('YYYY-MM-DD'),
+                'to':  moment(to_date).format('YYYY-MM-DD'),
+                'interval': getInterval(date),
+                'type': 'unique',
+                'on': 'properties[\"' + propName + '\"]'
+              });
+              var $dau = MP.api.segment(eventName, dauParams);
+              var $mau = MP.api.segment(eventName, mauParams);
+              
+              // Wait until the segmentation queries finish
+              $.when($dau, $mau).done(function(dau, mau) {
+                var output = {};
+                var dauQuery = dau.values();
+                var mauQuery = mau.values();
+
+                _.each(_.keys(dauQuery), function(property){
+                  var json = dauQuery[property];
+                  output[property] = {};
+                  
+                  // Calculating MAU
+                  var sum = 0;
+                  var objToSum = mauQuery[property];
+                  _.each(_.keys(objToSum), function(dates){
+                    var values = objToSum[dates];
+                    sum = sum + values;
+                  });
+                  if (sum == 0) {sum = 1}; 
+
+                  // Calculating DAU over MAU
+                  _.each(_.keys(json), function(date){
+                    var value = json[date];
+                    output[property][date] = value/sum;
+                  });
+                });
+                // Log and graph results
+                console.log(output)
+                eventGraph.MPChart('setData', output);
+                });
+            } 
+            // Run if only event selected
+            else {
+              var dauParams = $.extend({}, {
+                'from': moment(from_date).format('YYYY-MM-DD'),
+                'to':  moment(to_date).format('YYYY-MM-DD'),
+                'type': 'unique',
+                'unit': 'day',
+              });
+              var mauParams = $.extend({}, {
+                'from': moment(from_date).format('YYYY-MM-DD'),
+                'to':  moment(to_date).format('YYYY-MM-DD'),
+                'interval': getInterval(date),
+                'type': 'unique',
+              });
+              var $dau = MP.api.segment(eventName, dauParams);
+              var $mau = MP.api.segment(eventName, mauParams);
+              
+              // Wait until the segmentation queries finish
+              $.when($dau, $mau).done(function(dau, mau) {
+                var output = {};
+                var dauQuery = dau.values()[eventName];
+                var mauQuery = mau.values()[eventName];
+                output[eventName] = {};
+                
+                // Calculating MAU
+                var sum = 0;
+                _.each(_.keys(mauQuery), function(dates){
+                  var values = mauQuery[dates];
+                  sum = sum + values;
+                });
+                if (sum == 0) {sum = 1}; 
+
+                // Calculating DAU over MAU
+                _.each(_.keys(dauQuery), function(date){
+                  var value = dauQuery[date];
+                  output[eventName][date] = value/sum;
+                });
+                
+                // Log and graph results
+                console.log(output)
+                eventGraph.MPChart('setData', output);
+              });
+            };
+          };
+        };
+        //actions when dropdowns change
+        eventSelect.on('change', function(e, eventName) {
+          propSelect.MPPropertySelect('setEvent', eventName);
+          $("#by").show();
+          runQuery();
+        });
+        propSelect.on('change', runQuery);
+        $("#slider").bind("valuesChanged", runQuery);
+      });
     </script>
+    
   </body>
 </html>
